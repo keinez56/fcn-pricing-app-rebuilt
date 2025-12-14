@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c:*)",
+      "Bash(python analyze_data.py:*)",
+      "Bash(python merge_data.py:*)",
+      "Bash(python data_preprocessing.py:*)",
+      "Bash(python feature_engineering.py:*)",
+      "Bash(python handle_variable_basket.py:*)",
+      "Bash(python feature_engineering_v2.py:*)",
+      "Bash(python:*)",
+      "Bash(git clone:*)",
+      "Bash(dir:*)",
+      "Bash(xcopy:*)",
+      "Bash(robocopy:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(curl:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run dev:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit: FCN pricing prediction web app\n\n- Frontend: React + TypeScript + Tailwind + shadcn/ui\n- Backend: FastAPI with HistGradientBoosting ML model (R²=0.92)\n- Features: Stock selector, FCN parameter input, AI-powered yield prediction\n- Includes IV data for 7 pricing dates\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(gh auth:*)",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(copy \"C:\\Users\\User\\Desktop\\Vscode_Project\\FCN_rebuilt\\iv_data\\20251208.xlsx\" \"c:\\Users\\User\\Desktop\\Vscode_Project\\FCN_rebuilt\\fcn-web-app\\backend\\data\\iv_data\"\")",
+      "Bash(git commit -m \"$(cat <<''EOF''\nMajor update: Retrained model with new data & Non-call Periods support\n\nModel improvements:\n- Retrained with 2025/12/12 new data (513 samples)\n- Optimized for high IV stocks (IV > 80)\n- R² = 0.92, CV R² = 0.92\n- 129 features including new Non-call related features\n\nBackend API:\n- Added nonCallPeriods parameter support\n- Added No_KO_Flag feature when Non-call == Tenor\n- Returns no_ko indicator in response\n\nFrontend UI:\n- Added Non-call Periods input field\n- Auto-adjusts when period changes\n- Shows warning when Non-call == Tenor (no KO trigger)\n- Displays No KO badge in results\n\nIV Data:\n- Added 20251212.xlsx\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
