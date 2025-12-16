@@ -54,7 +54,7 @@ export function FCNPricingTool() {
     });
   }, []);
 
-  const handleCalculate = useCallback(() => {
+  const handleCalculate = useCallback(async () => {
     if (kiError) {
       toast({
         title: "驗證錯誤",
@@ -75,17 +75,63 @@ export function FCNPricingTool() {
 
     setIsCalculating(true);
 
-    // Simulate calculation delay
-    setTimeout(() => {
-      const newQuote = calculateQuote(params);
-      setQuote(newQuote);
-      setIsCalculating(false);
-
-      toast({
-        title: "報價計算完成",
-        description: `參考年化票息: ${newQuote.annualizedCoupon.toFixed(2)}% p.a.`,
+    try {
+      // 呼叫後端 ML 模型 API
+      const response = await fetch('/api/fcn/calculate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          stocks: params.underlyingAssets,
+          period: params.tenor,
+          strikePrice: params.strikePrice,
+          knockOutPrice: params.knockOutBarrier,
+          knockInPrice: params.knockInBarrier,
+          kiType: params.barrierType,
+          customFeeRate: params.issuePrice,
+          nonCallPeriods: params.protectionPeriod,
+        }),
       });
-    }, 500);
+
+      if (response.ok) {
+        const result = await response.json();
+        const newQuote = {
+          annualizedCoupon: result.annualized_yield,
+          riskLevel: result.annualized_yield > 15 ? 'High' as const :
+                     result.annualized_yield > 10 ? 'Medium' as const : 'Low' as const,
+          worstCaseReturn: -(100 - result.annualized_yield * (params.tenor / 12)),
+          bestCaseReturn: result.annualized_yield * (params.tenor / 12),
+        };
+        setQuote(newQuote);
+        toast({
+          title: "報價計算完成",
+          description: `ML 模型預測年化票息: ${newQuote.annualizedCoupon.toFixed(2)}% p.a.`,
+        });
+      } else {
+        const error = await response.json();
+        toast({
+          title: "計算失敗",
+          description: error.detail || "請稍後再試",
+          variant: "destructive",
+        });
+        // 後端失敗時使用本地計算作為備用
+        const fallbackQuote = calculateQuote(params);
+        setQuote(fallbackQuote);
+      }
+    } catch (error) {
+      console.error('API call failed:', error);
+      toast({
+        title: "網路錯誤",
+        description: "無法連接後端服務，使用本地估算",
+        variant: "destructive",
+      });
+      // 網路錯誤時使用本地計算作為備用
+      const fallbackQuote = calculateQuote(params);
+      setQuote(fallbackQuote);
+    } finally {
+      setIsCalculating(false);
+    }
   }, [params, kiError]);
 
   const handleReset = useCallback(() => {

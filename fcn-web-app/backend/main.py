@@ -252,6 +252,12 @@ def compute_features(input_data: dict, iv_data_list: list) -> pd.DataFrame:
     # No KO Flag (當 Non-call == Tenor 時，不會觸發 KO)
     features['No_KO_Flag'] = 1 if features['Non-call Periods (m)'] == input_data['tenor'] else 0
 
+    # No_KO 交互特徵 (V4 新增)
+    no_ko = features['No_KO_Flag']
+    features['No_KO_Tenor_Interaction'] = no_ko * input_data['tenor']
+    features['No_KO_KI_Interaction'] = no_ko * input_data['ki_barrier']
+    features['No_KO_Strike_Interaction'] = no_ko * input_data['strike']
+
     # 費用特徵
     features['Fee'] = 100 - input_data['cost']
     features['Annualized_Fee'] = features['Fee'] / input_data['tenor'] * 12
@@ -278,69 +284,95 @@ def compute_features(input_data: dict, iv_data_list: list) -> pd.DataFrame:
     features['Num_Underlyings'] = basket_size
     features['Basket_Complexity_Factor'] = basket_size / 3.0
 
-    # 排序後的IV特徵
-    iv_cols_mapping = {
-        'PUT_IMP_VOL_3M': 'PUT_IMP_VOL_3M_Rank',
-        'CALL_IMP_VOL_2M_25D': 'CALL_IMP_VOL_2M_25D_Rank',
-        'PUT_IMP_VOL_2M_25D': 'PUT_IMP_VOL_2M_25D_Rank',
-        'HIST_PUT_IMP_VOL': 'HIST_PUT_IMP_VOL_Rank',
-        'VOL_STDDEV': 'VOL_STDDEV_Rank',
-        'VOLATILITY_90D': 'VOLATILITY_90D_Rank',
-        'VOL_PERCENTILE': 'VOL_PERCENTILE_Rank',
-        'CHG_PCT_1YR': 'CHG_PCT_1YR_Rank',
-        'CORR_COEF': 'CORR_COEF_Rank',
-        'DIVIDEND_YIELD': 'DIVIDEND_YIELD_Rank',
-        'PX_LAST': 'PX_LAST_Rank',
-    }
+    # 原始 IV 欄位列表
+    iv_cols = ['PX_LAST', 'PUT_IMP_VOL_3M', 'CALL_IMP_VOL_2M_25D', 'PUT_IMP_VOL_2M_25D',
+               'HIST_PUT_IMP_VOL', 'VOL_STDDEV', 'VOLATILITY_90D', 'VOL_PERCENTILE',
+               'CHG_PCT_1YR', 'CORR_COEF', 'DIVIDEND_YIELD']
 
-    # 支援最多4檔股票的特徵
+    # V8: 先生成原始 IV 欄位 (PUT_IMP_VOL_3M, PUT_IMP_VOL_3M_2, etc.)
     max_stocks = 4
-    for orig_col, rank_prefix in iv_cols_mapping.items():
-        for i in range(max_stocks):
-            rank_col = f'{rank_prefix}_{i+1}'
-            if i < len(iv_data_list) and iv_data_list[i] is not None:
-                features[rank_col] = iv_data_list[i].get(orig_col, np.nan)
-            else:
-                features[rank_col] = np.nan
-
-    # IV Skew 和 Premium (支援4檔)
     for i in range(max_stocks):
-        if i < len(iv_data_list) and iv_data_list[i] is not None:
-            put_iv = iv_data_list[i].get('PUT_IMP_VOL_2M_25D', np.nan)
-            call_iv = iv_data_list[i].get('CALL_IMP_VOL_2M_25D', np.nan)
-            hist_iv = iv_data_list[i].get('VOLATILITY_90D', np.nan)
-            iv_3m = iv_data_list[i].get('PUT_IMP_VOL_3M', np.nan)
-
-            if pd.notna(put_iv) and pd.notna(call_iv):
-                features[f'IV_Skew_Rank_{i+1}'] = put_iv - call_iv
+        suffix = '' if i == 0 else f'_{i+1}'
+        for col in iv_cols:
+            col_name = f'{col}{suffix}'
+            if i < len(iv_data_list) and iv_data_list[i] is not None:
+                features[col_name] = iv_data_list[i].get(col, np.nan)
             else:
-                features[f'IV_Skew_Rank_{i+1}'] = np.nan
+                features[col_name] = np.nan
 
-            if pd.notna(iv_3m) and pd.notna(hist_iv) and hist_iv != 0:
-                features[f'IV_Premium_Rank_{i+1}'] = (iv_3m - hist_iv) / hist_iv
-            else:
-                features[f'IV_Premium_Rank_{i+1}'] = np.nan
+    # V8: 按 PUT_IMP_VOL_3M 降冪排序生成 _Rank_ 欄位
+    # 收集每個股票的 IV 值和索引
+    iv_pairs = []
+    for i in range(max_stocks):
+        suffix = '' if i == 0 else f'_{i+1}'
+        iv_val = features.get(f'PUT_IMP_VOL_3M{suffix}', np.nan)
+        if pd.notna(iv_val):
+            iv_pairs.append((i, iv_val))
         else:
-            features[f'IV_Skew_Rank_{i+1}'] = np.nan
-            features[f'IV_Premium_Rank_{i+1}'] = np.nan
+            iv_pairs.append((i, -np.inf))
+
+    # 按 IV 降冪排序
+    sorted_pairs = sorted(iv_pairs, key=lambda x: x[1], reverse=True)
+    sorted_indices = [p[0] for p in sorted_pairs]
+
+    # 生成排序後的特徵 (_Rank_1, _Rank_2, etc.)
+    for col in iv_cols:
+        for rank in range(max_stocks):
+            rank_col = f'{col}_Rank_{rank+1}'
+            orig_idx = sorted_indices[rank]
+            orig_suffix = '' if orig_idx == 0 else f'_{orig_idx+1}'
+            features[rank_col] = features.get(f'{col}{orig_suffix}', np.nan)
+
+    # IV Skew 和 Premium - 原始版本 (IV_Skew_1, IV_Skew_2, etc.)
+    for i in range(max_stocks):
+        suffix = '' if i == 0 else f'_{i+1}'
+        put_iv = features.get(f'PUT_IMP_VOL_2M_25D{suffix}', np.nan)
+        call_iv = features.get(f'CALL_IMP_VOL_2M_25D{suffix}', np.nan)
+        hist_iv = features.get(f'VOLATILITY_90D{suffix}', np.nan)
+        iv_3m = features.get(f'PUT_IMP_VOL_3M{suffix}', np.nan)
+
+        if pd.notna(put_iv) and pd.notna(call_iv):
+            features[f'IV_Skew_{i+1}'] = put_iv - call_iv
+        else:
+            features[f'IV_Skew_{i+1}'] = np.nan
+
+        if pd.notna(iv_3m) and pd.notna(hist_iv) and hist_iv != 0:
+            features[f'IV_Premium_{i+1}'] = (iv_3m - hist_iv) / hist_iv
+        else:
+            features[f'IV_Premium_{i+1}'] = np.nan
+
+    # IV Skew 和 Premium - 排序版本 (IV_Skew_Rank_1, etc.)
+    for rank in range(max_stocks):
+        orig_idx = sorted_indices[rank]
+        features[f'IV_Skew_Rank_{rank+1}'] = features.get(f'IV_Skew_{orig_idx+1}', np.nan)
+        features[f'IV_Premium_Rank_{rank+1}'] = features.get(f'IV_Premium_{orig_idx+1}', np.nan)
 
     # Basket聚合特徵
     iv_values = [d.get('PUT_IMP_VOL_3M') for d in iv_data_list if d and pd.notna(d.get('PUT_IMP_VOL_3M'))]
     hv_values = [d.get('VOLATILITY_90D') for d in iv_data_list if d and pd.notna(d.get('VOLATILITY_90D'))]
     corr_values = [d.get('CORR_COEF') for d in iv_data_list if d and pd.notna(d.get('CORR_COEF'))]
 
-    features['IV_Spread'] = max(iv_values) - min(iv_values) if len(iv_values) >= 2 else 0
-    features['Basket_IV_Range'] = features['IV_Spread']
+    # V8: IV 聚合特徵 (使用 Basket_Worst_IV/Best_IV 命名)
+    features['Basket_Worst_IV'] = max(iv_values) if iv_values else np.nan
+    features['Basket_Best_IV'] = min(iv_values) if iv_values else np.nan
+    features['Basket_IV_Range'] = (max(iv_values) - min(iv_values)) if len(iv_values) >= 2 else 0
+    features['Basket_Avg_IV'] = np.mean(iv_values) if iv_values else np.nan
 
+    # HV 聚合特徵
+    features['Basket_Worst_HV'] = max(hv_values) if hv_values else np.nan
+    features['Basket_Best_HV'] = min(hv_values) if hv_values else np.nan
+    features['Basket_Avg_HV'] = np.mean(hv_values) if hv_values else np.nan
+
+    # 相關係數聚合特徵
     features['Basket_Avg_Corr'] = np.mean(corr_values) if corr_values else np.nan
     features['Basket_Min_Corr'] = min(corr_values) if corr_values else np.nan
     features['Max_Correlation'] = max(corr_values) if corr_values else np.nan
     features['Min_Correlation'] = min(corr_values) if corr_values else np.nan
 
-    skew_values = [features.get(f'IV_Skew_Rank_{i+1}') for i in range(basket_size)
-                   if pd.notna(features.get(f'IV_Skew_Rank_{i+1}'))]
-    premium_values = [features.get(f'IV_Premium_Rank_{i+1}') for i in range(basket_size)
-                      if pd.notna(features.get(f'IV_Premium_Rank_{i+1}'))]
+    skew_values = [features.get(f'IV_Skew_{i+1}') for i in range(basket_size)
+                   if pd.notna(features.get(f'IV_Skew_{i+1}'))]
+    premium_values = [features.get(f'IV_Premium_{i+1}') for i in range(basket_size)
+                      if pd.notna(features.get(f'IV_Premium_{i+1}'))]
 
     features['Basket_Avg_Skew'] = np.mean(skew_values) if skew_values else np.nan
     features['Basket_Max_Skew'] = max(skew_values) if skew_values else np.nan
@@ -352,11 +384,13 @@ def compute_features(input_data: dict, iv_data_list: list) -> pd.DataFrame:
     else:
         features['IV_HV_Ratio'] = np.nan
 
-    # 風險評分特徵
+    # 風險評分特徵 - V8 使用 Basket_Worst_IV
     rank_1_iv = features.get('PUT_IMP_VOL_3M_Rank_1', np.nan)
+    worst_iv = features.get('Basket_Worst_IV', np.nan)
 
-    if pd.notna(rank_1_iv):
-        features['Annualized_Vol_Factor'] = rank_1_iv / 100 * np.sqrt(input_data['tenor'] / 12)
+    if pd.notna(worst_iv):
+        # V8: 使用 worst_iv 計算 Annualized_Vol_Factor
+        features['Annualized_Vol_Factor'] = worst_iv / 100 * np.sqrt(input_data['tenor'] / 12)
 
         if features['Annualized_Vol_Factor'] > 0:
             features['KI_Distance_Std'] = features['KI_Distance_Pct'] / 100 / features['Annualized_Vol_Factor']
@@ -367,20 +401,27 @@ def compute_features(input_data: dict, iv_data_list: list) -> pd.DataFrame:
             features['KO_Distance_Std'] = np.nan
             features['KI_Distance_Std_Sorted'] = np.nan
 
-        features['Annualized_Vol'] = rank_1_iv * np.sqrt(input_data['tenor'] / 12)
+        features['Annualized_Vol'] = features['Basket_Avg_IV'] * np.sqrt(input_data['tenor'] / 12) if pd.notna(features['Basket_Avg_IV']) else np.nan
 
         if pd.notna(features['Basket_Avg_Corr']) and basket_size > 1:
-            features['Corr_Adjusted_IV'] = rank_1_iv * (1 + 0.1 * (basket_size - 1) * (1 - features['Basket_Avg_Corr']))
+            features['Corr_Adjusted_IV'] = worst_iv * (1 + 0.1 * (basket_size - 1) * (1 - features['Basket_Avg_Corr']))
         else:
-            features['Corr_Adjusted_IV'] = rank_1_iv
+            features['Corr_Adjusted_IV'] = worst_iv
 
-        features['KI_Risk_Score'] = (rank_1_iv / 43.5) * (input_data['ki_barrier'] / 100)
+        # V8: 用 worst_iv 的平均值 (約 43.5) 作為基準
+        mean_worst_iv = 43.5
+        features['KI_Risk_Score'] = (worst_iv / mean_worst_iv) * (input_data['ki_barrier'] / 100)
         features['Basket_Risk_Score'] = features['KI_Risk_Score'] * (1 + 0.2 * (basket_size - 1))
 
         if pd.notna(features['Basket_Avg_Corr']) and basket_size > 1:
             features['Basket_Risk_Score'] *= (1 + 0.1 * (1 - features['Basket_Avg_Corr']))
 
-        features['Risk_Score_Sorted'] = (rank_1_iv / 52.4) * (input_data['ki_barrier'] / 100) * (1 + 0.2 * (basket_size - 1))
+        # V8: 用 rank_1_iv 計算 Risk_Score_Sorted (如果可用)
+        if pd.notna(rank_1_iv):
+            mean_rank1_iv = 52.4
+            features['Risk_Score_Sorted'] = (rank_1_iv / mean_rank1_iv) * (input_data['ki_barrier'] / 100) * (1 + 0.2 * (basket_size - 1))
+        else:
+            features['Risk_Score_Sorted'] = features['KI_Risk_Score'] * (1 + 0.2 * (basket_size - 1))
     else:
         for key in ['Annualized_Vol_Factor', 'KI_Distance_Std', 'KO_Distance_Std',
                     'KI_Distance_Std_Sorted', 'Annualized_Vol', 'Corr_Adjusted_IV',
@@ -388,6 +429,9 @@ def compute_features(input_data: dict, iv_data_list: list) -> pd.DataFrame:
             features[key] = np.nan
 
     features['Return_Potential'] = (input_data['ko_barrier'] / 100) * (input_data['tenor'] / 12)
+
+    # No_KO 交互特徵
+    features['No_KO_Basket_Interaction'] = features['No_KO_Flag'] * basket_size
 
     return pd.DataFrame([features])
 

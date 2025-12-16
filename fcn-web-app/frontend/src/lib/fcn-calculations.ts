@@ -50,10 +50,8 @@ export function calculateQuote(params: FCNParameters): QuoteResult {
   // AKI is riskier = Higher coupon
   const barrierTypeAdjustment = params.barrierType === 'AKI' ? 1.2 : 0;
 
-  // Add some randomness for simulation feel
-  const volatilityFactor = 0.95 + Math.random() * 0.1;
-
-  const finalCoupon = (baseCoupon + strikeAdjustment + kiAdjustment + koAdjustment + tenorAdjustment + assetAdjustment + barrierTypeAdjustment) * volatilityFactor;
+  // 移除隨機因子，使用固定計算（此函數僅作為後端 API 無法連接時的備用）
+  const finalCoupon = baseCoupon + strikeAdjustment + kiAdjustment + koAdjustment + tenorAdjustment + assetAdjustment + barrierTypeAdjustment;
 
   // Determine risk level
   let riskLevel: 'Low' | 'Medium' | 'High' = 'Medium';
